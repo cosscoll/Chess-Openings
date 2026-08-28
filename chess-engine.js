@@ -406,7 +406,7 @@ const ChessEngine = (function () {
     }
     tick();
 
-    return { goToIndex, reset, flyIn };
+    return { goToIndex, reset, flyIn, resize };
   }
 
   return { create };
