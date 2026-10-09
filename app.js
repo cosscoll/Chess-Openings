@@ -35,6 +35,34 @@ Object.keys(OPENINGS).forEach((slug, i)=>{
   grid.appendChild(li);
 });
 
+// Recherche instantanée et compteur de résultats, sans dépendance supplémentaire.
+const searchWrap = document.createElement('div');
+searchWrap.className = 'opening-search';
+searchWrap.innerHTML = '<label for="opening-search-input">Trouver une ouverture</label><div class="opening-search__input-wrap"><span aria-hidden="true">⌕</span><input id="opening-search-input" type="search" placeholder="Nom, défense ou code ECO…" autocomplete="off" spellcheck="false"><kbd>/</kbd></div><p id="opening-search-count" aria-live="polite"></p>';
+grid.parentNode.insertBefore(searchWrap, grid);
+const searchInput = document.getElementById('opening-search-input');
+const searchCount = document.getElementById('opening-search-count');
+const openingCards = Array.from(grid.children);
+function normalizeSearch(value) {
+  return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+}
+function filterOpenings() {
+  const query = normalizeSearch(searchInput.value);
+  let visible = 0;
+  openingCards.forEach((li, index) => {
+    const slug = Object.keys(OPENINGS)[index];
+    const opening = OPENINGS[slug];
+    const matches = normalizeSearch([opening.name, opening.eco, opening.description].join(' ')).includes(query);
+    li.hidden = !matches;
+    if (matches) visible++;
+  });
+  searchCount.textContent = visible === openingCards.length
+    ? openingCards.length + ' ouvertures à explorer'
+    : visible + ' ouverture' + (visible > 1 ? 's' : '') + ' trouvée' + (visible > 1 ? 's' : '');
+}
+searchInput.addEventListener('input', filterOpenings);
+filterOpenings();
+
 const homeCanvas = document.getElementById('home-canvas');
 const homeEngine = ChessEngine.create({ canvas: homeCanvas, idle: true });
 homeEngine.flyIn(1300);
@@ -59,8 +87,13 @@ const nextBtn = document.getElementById('next-move');
 let currentObserver = null;
 let activeIndex = -1;
 let totalMoves = 0;
+let activeMoves = [];
+let activeSteps = [];
+let currentSlug = null;
+let scrollTicking = false;
 
 function openOpening(slug) {
+  currentSlug = slug;
   const opening = OPENINGS[slug];
   homeScreen.classList.add('is-hidden');
   openingPage.classList.add('is-active');
@@ -71,6 +104,7 @@ function openOpening(slug) {
 
   scrollTrack.innerHTML = '';
   const moves = opening.moves;
+  activeMoves = moves;
   totalMoves = moves.length;
   moves.forEach((move, i) => {
     const step = document.createElement('div');
@@ -148,7 +182,8 @@ function openOpening(slug) {
       if (!hintHidden) { hintHidden = true; scrollHint.classList.add('is-hidden'); }
     });
   }, { threshold: 0.6 });
-  const steps = Array.from(document.querySelectorAll('.scroll-step'));
+  const steps = Array.from(scrollTrack.querySelectorAll('.scroll-step'));
+  activeSteps = steps;
   steps.forEach((step) => currentObserver.observe(step));
 
   const smooth = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
@@ -164,6 +199,7 @@ function openOpening(slug) {
 }
 
 function closeOpening() {
+  if (currentObserver) { currentObserver.disconnect(); currentObserver = null; }
   openingPage.classList.remove('is-active');
   homeScreen.classList.remove('is-hidden');
   window.scrollTo(0, 0);
@@ -179,3 +215,33 @@ document.getElementById('restart-link').addEventListener('click', () => {
   if (openingEngine) openingEngine.flyIn(900);
 });
 
+
+// Navigation clavier et liens partageables vers une ouverture.
+document.addEventListener('keydown', (event) => {
+  if (event.altKey || event.ctrlKey || event.metaKey) return;
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
+  if (typing) {
+    if (event.key === 'Escape') document.activeElement.blur();
+    return;
+  }
+  if (!openingPage.classList.contains('is-active')) {
+    if (event.key === '/') { event.preventDefault(); searchInput.focus(); }
+    return;
+  }
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeOpening();
+  } else if (['ArrowRight', 'ArrowDown', ' '].includes(event.key)) {
+    event.preventDefault();
+    nextBtn.click();
+  } else if (['ArrowLeft', 'ArrowUp'].includes(event.key)) {
+    event.preventDefault();
+    prevBtn.click();
+  } else if (event.key === 'Home') {
+    event.preventDefault();
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  } else if (event.key === 'End' && activeSteps.length) {
+    event.preventDefault();
+    activeSteps[activeSteps.length - 1].scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+});
