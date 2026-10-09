@@ -10,91 +10,87 @@ const ChessEngine = (function () {
     return { col: FILES.indexOf(file), row: 8 - rank };
   }
 
-  // Pièces de style Staunton, modélisées géométriquement dans Three.js.
-  // Aucun symbole plat ou police externe n'est nécessaire.
-  // Ivoire satiné contre anthracite presque noir : deux camps bien distincts,
-  // mais sans surfaces "brûlées" par la lumière.
-  const PIECE_MATERIALS = {
-    w: new THREE.MeshStandardMaterial({ color: 0xd2d7ce, roughness: 0.65, metalness: 0.02 }),
-    b: new THREE.MeshStandardMaterial({ color: 0x131b18, roughness: 0.52, metalness: 0.10 })
+  // V4 : pièces plates, vues du dessus. Les six silhouettes normalisées sont
+  // volontairement beaucoup plus lisibles que les anciens volumes Staunton.
+  const GLYPHS = {
+    pawn: '♟', knight: '♞', bishop: '♝',
+    rook: '♜', queen: '♛', king: '♚'
   };
-  const PIECE_ACCENTS = {
-    w: new THREE.MeshStandardMaterial({ color: 0x879a8e, roughness: 0.58, metalness: 0.02 }),
-    b: new THREE.MeshStandardMaterial({ color: 0x536e5d, roughness: 0.5, metalness: 0.13 })
+  const TOKEN_COLORS = {
+    w: { disc: 0xdfe9de, rim: 0x15291d, symbol: '#10221a', outline: '#f5fff7' },
+    b: { disc: 0x0d1913, rim: 0xa3cdb0, symbol: '#e9f4e8', outline: '#0c1812' }
   };
-  function lathe(group, profile, material) {
-    const points = profile.map(([radius,height]) => new THREE.Vector2(radius,height));
-    const mesh = new THREE.Mesh(new THREE.LatheGeometry(points, 24),material);
-    group.add(mesh);
-    return mesh;
+  const TOKEN_RADIUS = 0.385;
+  const TOKEN_GEO = new THREE.CylinderGeometry(TOKEN_RADIUS, TOKEN_RADIUS, 0.045, 48);
+  const TOKEN_RING_GEO = new THREE.TorusGeometry(0.358, 0.014, 6, 48);
+  const TOKEN_ICON_GEO = new THREE.PlaneGeometry(0.68, 0.68);
+  const TOKEN_FACE_MATS = {
+    w: new THREE.MeshBasicMaterial({ color: TOKEN_COLORS.w.disc, toneMapped: false }),
+    b: new THREE.MeshBasicMaterial({ color: TOKEN_COLORS.b.disc, toneMapped: false })
+  };
+  const TOKEN_RING_MATS = {
+    w: new THREE.MeshBasicMaterial({ color: TOKEN_COLORS.w.rim, toneMapped: false }),
+    b: new THREE.MeshBasicMaterial({ color: TOKEN_COLORS.b.rim, toneMapped: false })
+  };
+  const TOKEN_ICON_CACHE = new Map();
+  function drawTokenIcon(entry) {
+    const ctx = entry.ctx;
+    const c = TOKEN_COLORS[entry.color];
+    const glyph = GLYPHS[entry.type];
+    const size = 384;
+    ctx.clearRect(0, 0, size, size);
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '300px "Noto Sans Symbols 2", "Segoe UI Symbol", "DejaVu Sans", sans-serif';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 9;
+    ctx.strokeStyle = c.outline;
+    ctx.fillStyle = c.symbol;
+    ctx.strokeText(glyph, size / 2, size / 2 + 6);
+    ctx.fillText(glyph, size / 2, size / 2 + 6);
+    ctx.restore();
+    entry.texture.needsUpdate = true;
   }
-  function sphere(group,radius,y,material,x=0,z=0) {
-    const mesh = new THREE.Mesh(new THREE.SphereGeometry(radius,16,12),material);
-    mesh.position.set(x,y,z);group.add(mesh);return mesh;
-  }
-  function box(group,w,h,d,x,y,z,material) {
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w,h,d),material);
-    mesh.position.set(x,y,z);group.add(mesh);return mesh;
-  }
-  const BASE = [[0,0],[.27,0],[.31,.035],[.31,.09],[.265,.125],[.23,.15],[.225,.175]];
-  function body(group,type,mat) {
-    const profiles = {
-      pawn:[[.225,.175],[.13,.2],[.11,.32],[.15,.37],[.15,.4],[0,.4]],
-      rook:[[.225,.175],[.19,.2],[.175,.4],[.24,.43],[.24,.49],[.17,.5]],
-      knight:[[.225,.175],[.20,.22],[.17,.34]],
-      bishop:[[.225,.175],[.17,.22],[.125,.42],[.18,.45],[.175,.49],[.12,.6],[0,.64]],
-      queen:[[.225,.175],[.17,.21],[.13,.36],[.22,.55],[.24,.6],[.17,.61]],
-      king:[[.225,.175],[.17,.21],[.13,.4],[.22,.57],[.24,.63],[.15,.65]]
+  function iconMaterial(type, color) {
+    const key = type + '-' + color;
+    if (TOKEN_ICON_CACHE.has(key)) return TOKEN_ICON_CACHE.get(key).material;
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 384;
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.encoding = THREE.sRGBEncoding;
+    const entry = {
+      type, color, texture, ctx: canvas.getContext('2d'),
+      material: new THREE.MeshBasicMaterial({
+        map: texture, transparent: true, alphaTest: 0.02,
+        depthWrite: false, toneMapped: false, side: THREE.DoubleSide
+      })
     };
-    lathe(group,BASE.concat(profiles[type]),mat);
+    drawTokenIcon(entry);
+    TOKEN_ICON_CACHE.set(key, entry);
+    return entry.material;
   }
-  function buildPiece(type,colorKey) {
-    const mat=PIECE_MATERIALS[colorKey],accent=PIECE_ACCENTS[colorKey];
-    const g=new THREE.Group();
-    body(g,type,mat);
-    if(type==='pawn') sphere(g,.145,.52,mat);
-    if(type==='rook') {
-      // Couronne crénelée, véritable silhouette de tour.
-      for(let i=0;i<6;i++){
-        const a=i*Math.PI/3;
-        box(g,.115,.13,.13,Math.cos(a)*.19,.55,Math.sin(a)*.19,mat).rotation.y=-a;
-      }
-    }
-    if(type==='bishop') {
-      sphere(g,.045,.68,accent);
-      const groove=box(g,.035,.17,.024,.09,.55,.0,accent);
-      groove.rotation.z=-.62;
-    }
-    if(type==='queen') {
-      for(let i=0;i<7;i++){
-        const a=i*2*Math.PI/7;
-        sphere(g,.053,.69,accent,Math.cos(a)*.20,Math.sin(a)*.20);
-      }
-      sphere(g,.078,.70,mat);
-    }
-    if(type==='king'){
-      sphere(g,.12,.71,mat);
-      box(g,.075,.25,.075,0,.86,0,accent);
-      box(g,.225,.072,.075,0,.88,0,accent);
-    }
-    if(type==='knight'){
-      // Tête et encolure extrudées pour conserver un profil reconnaissable.
-      const shape=new THREE.Shape();
-      shape.moveTo(-.17,.29);
-      shape.lineTo(-.1,.63);shape.lineTo(-.045,.74);
-      shape.lineTo(.06,.70);shape.lineTo(.12,.63);
-      shape.lineTo(.23,.59);shape.lineTo(.24,.50);
-      shape.lineTo(.12,.48);shape.lineTo(.07,.38);
-      shape.lineTo(.15,.27);shape.closePath();
-      const geo=new THREE.ExtrudeGeometry(shape,{depth:.20,bevelEnabled:true,bevelThickness:.025,bevelSize:.025,bevelSegments:2,curveSegments:5});
-      const head=new THREE.Mesh(geo,mat);
-      head.position.z=-.1;g.add(head);
-      sphere(g,.026,.62,accent,.075,.129);
-      sphere(g,.026,.62,accent,.075,-.129);
-      box(g,.048,.13,.055,-.065,.75,-.065,mat).rotation.z=-.32;
-      box(g,.048,.13,.055,-.065,.75,.065,mat).rotation.z=-.32;
-    }
-    return g;
+  if (document.fonts) {
+    // Les pictogrammes s'affichent même avant le chargement de la police;
+    // une seconde passe garantit la forme définitive une fois celle-ci prête.
+    document.fonts.load('300px "Noto Sans Symbols 2"')
+      .then(() => TOKEN_ICON_CACHE.forEach(drawTokenIcon))
+      .catch(() => {});
+  }
+  function buildPiece(type, colorKey) {
+    const group = new THREE.Group();
+    const disc = new THREE.Mesh(TOKEN_GEO, TOKEN_FACE_MATS[colorKey]);
+    disc.position.y = 0.026;
+    group.add(disc);
+    const rim = new THREE.Mesh(TOKEN_RING_GEO, TOKEN_RING_MATS[colorKey]);
+    rim.rotation.x = -Math.PI / 2;
+    rim.position.y = 0.051;
+    group.add(rim);
+    const icon = new THREE.Mesh(TOKEN_ICON_GEO, iconMaterial(type, colorKey));
+    icon.rotation.x = -Math.PI / 2;
+    icon.position.y = 0.056;
+    group.add(icon);
+    return group;
   }
 
   const LABEL_CACHE = {};
@@ -127,9 +123,9 @@ const ChessEngine = (function () {
     const camera = new THREE.PerspectiveCamera(36, (canvas.clientWidth || 1) / (canvas.clientHeight || 1), 0.1, 100);
     // Caméra fixe, côté Blancs (rang 1 au premier plan / bas d'écran,
     // rang 8 au fond / haut d'écran) — orientation standard.
-    camera.position.set(0, 12.5, 4.5);
+    camera.position.set(0, 16.5, 2.3);
     camera.lookAt(0, 0, 0.1);
-    const basePosition = { x: 0, y: 12.5, z: 4.5 };
+    const basePosition = { x: 0, y: 16.5, z: 2.3 };
 
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'high-performance' });
     renderer.outputEncoding = THREE.sRGBEncoding;
@@ -207,7 +203,7 @@ const ChessEngine = (function () {
       function spawn(type, colorKey, square) {
         const { col, row } = squareToColRow(square);
         const mesh = buildPiece(type, colorKey);
-        const homeY = 0.015;
+        const homeY = 0.005;
         mesh.position.set(col - BOARD_OFFSET, homeY, row - BOARD_OFFSET);
         mesh.userData = { square, col, row, homeY, alive: true, colorKey, isPiece: true };
         boardGroup.add(mesh);
@@ -290,7 +286,7 @@ const ChessEngine = (function () {
       const from = { x: mesh.position.x, z: mesh.position.z };
       const to = { x: col - BOARD_OFFSET, z: row - BOARD_OFFSET };
       const homeY = mesh.userData.homeY;
-      const lift = 0.95;
+      const lift = 0.25;
       const glow = mesh.userData.colorKey === 'w' ? 0xe9e5d6 : 0x8fd6b0;
 
       function step(now) {
@@ -309,9 +305,9 @@ const ChessEngine = (function () {
         mesh.position.y = homeY + arc * lift + (raw > 0.88 ? settle : 0);
 
         // Petit effet "pièce soulevée" : légère bascule + pulsation.
-        mesh.rotation.z = Math.sin(Math.PI * raw) * 0.14;
-        mesh.rotation.x = Math.sin(Math.PI * raw) * 0.08;
-        const scale = 1 + Math.sin(Math.PI * raw) * 0.16;
+        mesh.rotation.z = Math.sin(Math.PI * raw) * 0.04;
+        mesh.rotation.x = Math.sin(Math.PI * raw) * 0.03;
+        const scale = 1 + Math.sin(Math.PI * raw) * 0.06;
         mesh.scale.setScalar(scale);
 
         if (raw < 1) requestAnimationFrame(step);
