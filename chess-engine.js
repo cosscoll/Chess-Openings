@@ -4,61 +4,89 @@ const ChessEngine = (function () {
 
   const FILES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
   const BOARD_OFFSET = 3.5;
-  const GLYPH = { pawn: '♟', knight: '♞', bishop: '♝', rook: '♜', queen: '♛', king: '♚' };
-  const SYMBOL_FONT = '"Noto Sans Symbols 2"';
-
-  // Préchargement de la police de symboles d'échecs.
-  let fontReady = false;
-  const textureRegistry = [];
-  if (window.document && document.fonts) {
-    document.fonts.load('900 200px ' + SYMBOL_FONT).catch(() => {});
-    document.fonts.ready.then(() => {
-      fontReady = true;
-      textureRegistry.forEach((entry) => { drawGlyph(entry.ctx, entry.type, entry.colorKey); entry.texture.needsUpdate = true; });
-    });
+  // Pièces de style Staunton, modélisées géométriquement dans Three.js.
+  // Aucun symbole plat ou police externe n'est nécessaire.
+  const PIECE_MATERIALS = {
+    w: new THREE.MeshStandardMaterial({ color: 0xfff2d6, roughness: 0.32, metalness: 0.08 }),
+    b: new THREE.MeshStandardMaterial({ color: 0x202832, roughness: 0.3, metalness: 0.14 })
+  };
+  const PIECE_ACCENTS = {
+    w: new THREE.MeshStandardMaterial({ color: 0xc4a579, roughness: 0.38 }),
+    b: new THREE.MeshStandardMaterial({ color: 0x607486, roughness: 0.4 })
+  };
+  function lathe(group, profile, material) {
+    const points = profile.map(([radius,height]) => new THREE.Vector2(radius,height));
+    const mesh = new THREE.Mesh(new THREE.LatheGeometry(points, 24),material);
+    group.add(mesh);
+    return mesh;
   }
-
-  function squareToColRow(square) {
-    const file = square[0];
-    const rank = parseInt(square[1], 10);
-    // row=0 correspond au rang 8 (fond, côté Noirs) et row=7 au rang 1
-    // (premier plan, côté Blancs) — c'est ce mapping, combiné à la
-    // position de la caméra ci-dessous, qui place a1 en bas à gauche
-    // tout en gardant le texte des pièces bien droit à l'écran.
-    return { col: FILES.indexOf(file), row: 8 - rank };
+  function sphere(group,radius,y,material,x=0,z=0) {
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(radius,16,12),material);
+    mesh.position.set(x,y,z);group.add(mesh);return mesh;
   }
-
-  function drawGlyph(ctx, type, colorKey) {
-    const size = 256;
-    ctx.clearRect(0, 0, size, size);
-    const fill = colorKey === 'w' ? '#e9e5d6' : '#20222a';
-    const stroke = colorKey === 'w' ? '#20222a' : '#e9e5d6';
-    ctx.font = `900 210px ${SYMBOL_FONT}, "Segoe UI Symbol", "Apple Symbols", sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.lineJoin = 'round';
-    ctx.lineWidth = 7;
-    ctx.strokeStyle = stroke;
-    ctx.fillStyle = fill;
-    ctx.strokeText(GLYPH[type], size / 2, size / 2 + 8);
-    ctx.fillText(GLYPH[type], size / 2, size / 2 + 8);
+  function box(group,w,h,d,x,y,z,material) {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w,h,d),material);
+    mesh.position.set(x,y,z);group.add(mesh);return mesh;
   }
-
-  const TEXTURE_CACHE = {};
-  function pieceTexture(type, colorKey) {
-    const key = type + '_' + colorKey;
-    if (TEXTURE_CACHE[key]) return TEXTURE_CACHE[key];
-
-    const canvas = document.createElement('canvas');
-    canvas.width = 256; canvas.height = 256;
-    const ctx = canvas.getContext('2d');
-    drawGlyph(ctx, type, colorKey);
-
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.needsUpdate = true;
-    TEXTURE_CACHE[key] = texture;
-    textureRegistry.push({ ctx, type, colorKey, texture });
-    return texture;
+  const BASE = [[0,0],[.27,0],[.31,.035],[.31,.09],[.265,.125],[.23,.15],[.225,.175]];
+  function body(group,type,mat) {
+    const profiles = {
+      pawn:[[.225,.175],[.13,.2],[.11,.32],[.15,.37],[.15,.4],[0,.4]],
+      rook:[[.225,.175],[.19,.2],[.175,.4],[.24,.43],[.24,.49],[.17,.5]],
+      knight:[[.225,.175],[.20,.22],[.17,.34]],
+      bishop:[[.225,.175],[.17,.22],[.125,.42],[.18,.45],[.175,.49],[.12,.6],[0,.64]],
+      queen:[[.225,.175],[.17,.21],[.13,.36],[.22,.55],[.24,.6],[.17,.61]],
+      king:[[.225,.175],[.17,.21],[.13,.4],[.22,.57],[.24,.63],[.15,.65]]
+    };
+    lathe(group,BASE.concat(profiles[type]),mat);
+  }
+  function buildPiece(type,colorKey) {
+    const mat=PIECE_MATERIALS[colorKey],accent=PIECE_ACCENTS[colorKey];
+    const g=new THREE.Group();
+    body(g,type,mat);
+    if(type==='pawn') sphere(g,.145,.52,mat);
+    if(type==='rook') {
+      // Couronne crénelée, véritable silhouette de tour.
+      for(let i=0;i<6;i++){
+        const a=i*Math.PI/3;
+        box(g,.115,.13,.13,Math.cos(a)*.19,.55,Math.sin(a)*.19,mat).rotation.y=-a;
+      }
+    }
+    if(type==='bishop') {
+      sphere(g,.045,.68,accent);
+      const groove=box(g,.035,.17,.024,.09,.55,.0,accent);
+      groove.rotation.z=-.62;
+    }
+    if(type==='queen') {
+      for(let i=0;i<7;i++){
+        const a=i*2*Math.PI/7;
+        sphere(g,.053,.69,accent,Math.cos(a)*.20,Math.sin(a)*.20);
+      }
+      sphere(g,.078,.70,mat);
+    }
+    if(type==='king'){
+      sphere(g,.12,.71,mat);
+      box(g,.075,.25,.075,0,.86,0,accent);
+      box(g,.225,.072,.075,0,.88,0,accent);
+    }
+    if(type==='knight'){
+      // Tête et encolure extrudées pour conserver un profil reconnaissable.
+      const shape=new THREE.Shape();
+      shape.moveTo(-.17,.29);
+      shape.lineTo(-.1,.63);shape.lineTo(-.045,.74);
+      shape.lineTo(.06,.70);shape.lineTo(.12,.63);
+      shape.lineTo(.23,.59);shape.lineTo(.24,.50);
+      shape.lineTo(.12,.48);shape.lineTo(.07,.38);
+      shape.lineTo(.15,.27);shape.closePath();
+      const geo=new THREE.ExtrudeGeometry(shape,{depth:.20,bevelEnabled:true,bevelThickness:.025,bevelSize:.025,bevelSegments:2,curveSegments:5});
+      const head=new THREE.Mesh(geo,mat);
+      head.position.z=-.1;g.add(head);
+      sphere(g,.026,.62,accent,.075,.129);
+      sphere(g,.026,.62,accent,.075,-.129);
+      box(g,.048,.13,.055,-.065,.75,-.065,mat).rotation.z=-.32;
+      box(g,.048,.13,.055,-.065,.75,.065,mat).rotation.z=-.32;
+    }
+    return g;
   }
 
   const LABEL_CACHE = {};
@@ -72,7 +100,7 @@ const ChessEngine = (function () {
     ctx.font = '700 30px "Segoe UI", Arial, sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'bottom';
-    ctx.fillStyle = onGreen ? 'rgba(238,238,210,0.9)' : 'rgba(118,150,86,0.9)';
+    ctx.fillStyle = onGreen ? 'rgba(245,249,242,0.92)' : 'rgba(46,76,62,0.72)';
     ctx.fillText(text, 4, size - 4);
     const texture = new THREE.CanvasTexture(canvas);
     texture.needsUpdate = true;
@@ -80,67 +108,39 @@ const ChessEngine = (function () {
     return texture;
   }
 
-  /* -----------------------------------------------------------
-   * Fabrique de pièces — jeton rond (relief) + icône gravée à plat
-   * ----------------------------------------------------------- */
-
-  const DISC_GEO = new THREE.CylinderGeometry(0.36, 0.38, 0.09, 28);
-  const RIM_MAT = new THREE.MeshStandardMaterial({ color: 0x3d3f47, roughness: 0.5, metalness: 0.25 });
-  const ICON_GEO = new THREE.PlaneGeometry(0.62, 0.62);
-
-  const ICON_MAT_CACHE = {};
-  function iconMaterial(type, colorKey) {
-    const key = type + '_' + colorKey;
-    if (ICON_MAT_CACHE[key]) return ICON_MAT_CACHE[key];
-    const mat = new THREE.MeshBasicMaterial({ map: pieceTexture(type, colorKey), transparent: true });
-    ICON_MAT_CACHE[key] = mat;
-    return mat;
-  }
-
-  function buildPiece(type, colorKey) {
-    const g = new THREE.Group();
-    const disc = new THREE.Mesh(DISC_GEO, RIM_MAT);
-    g.add(disc);
-    const icon = new THREE.Mesh(ICON_GEO, iconMaterial(type, colorKey));
-    icon.rotation.x = -Math.PI / 2;
-    icon.position.y = 0.046; // juste au-dessus du sommet du jeton
-    g.add(icon);
-    return g;
-  }
-
   function create(options) {
     const canvas = options.canvas;
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
     const scene = new THREE.Scene();
-    scene.fog = new THREE.Fog(0x08090c, 13, 28);
+    scene.fog = new THREE.Fog(0x05070b, 16, 34);
 
     const camera = new THREE.PerspectiveCamera(36, (canvas.clientWidth || 1) / (canvas.clientHeight || 1), 0.1, 100);
     // Caméra fixe, côté Blancs (rang 1 au premier plan / bas d'écran,
     // rang 8 au fond / haut d'écran) — orientation standard.
-    camera.position.set(0, 13.6, 3.0);
+    camera.position.set(0, 12.5, 4.5);
     camera.lookAt(0, 0, 0.1);
-    const basePosition = { x: 0, y: 13.6, z: 3.0 };
+    const basePosition = { x: 0, y: 12.5, z: 4.5 };
 
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'high-performance' });
     renderer.outputEncoding = THREE.sRGBEncoding;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.2;
+    renderer.toneMappingExposure = 1.45;
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.65));
-    const keyLight = new THREE.DirectionalLight(0xffffff, 0.85);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.85));
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.7);
     keyLight.position.set(3, 12, 5);
     scene.add(keyLight);
-    const fillLight = new THREE.DirectionalLight(0xffffff, 0.3);
+    const fillLight = new THREE.DirectionalLight(0xbdd7ff, 0.6);
     fillLight.position.set(-4, 7, -3);
     scene.add(fillLight);
 
     const boardGroup = new THREE.Group();
     scene.add(boardGroup);
 
-    const GREEN = 0x537a69;
-    const CREAM = 0xdadbc9;
+    const GREEN = 0x47735f;
+    const CREAM = 0xf2eee2;
     const greenMat = new THREE.MeshStandardMaterial({ color: GREEN, roughness: 0.88 });
     const creamMat = new THREE.MeshStandardMaterial({ color: CREAM, roughness: 0.88 });
     const squareGeo = new THREE.PlaneGeometry(1, 1);
@@ -192,7 +192,7 @@ const ChessEngine = (function () {
       function spawn(type, colorKey, square) {
         const { col, row } = squareToColRow(square);
         const mesh = buildPiece(type, colorKey);
-        const homeY = 0.05;
+        const homeY = 0.015;
         mesh.position.set(col - BOARD_OFFSET, homeY, row - BOARD_OFFSET);
         mesh.userData = { square, col, row, homeY, alive: true, colorKey, isPiece: true };
         boardGroup.add(mesh);
@@ -231,7 +231,7 @@ const ChessEngine = (function () {
       const idx = captured[key]++;
       const pos = benchPosition(key, idx);
       mesh.position.set(pos.x, pos.y, pos.z);
-      mesh.scale.setScalar(0.6);
+      mesh.scale.setScalar(0.65);
     }
 
     function placeInstant(mesh, square) {
