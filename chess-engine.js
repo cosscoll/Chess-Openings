@@ -123,7 +123,10 @@ const ChessEngine = (function () {
     const basePosition = { x: 0, y: 13.6, z: 3.0 };
 
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'high-performance' });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.outputEncoding = THREE.sRGBEncoding;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.2;
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
 
     scene.add(new THREE.AmbientLight(0xffffff, 0.65));
     const keyLight = new THREE.DirectionalLight(0xffffff, 0.85);
@@ -136,10 +139,10 @@ const ChessEngine = (function () {
     const boardGroup = new THREE.Group();
     scene.add(boardGroup);
 
-    const GREEN = 0x769656;
-    const CREAM = 0xeeeed2;
-    const greenMat = new THREE.MeshBasicMaterial({ color: GREEN });
-    const creamMat = new THREE.MeshBasicMaterial({ color: CREAM });
+    const GREEN = 0x537a69;
+    const CREAM = 0xdadbc9;
+    const greenMat = new THREE.MeshStandardMaterial({ color: GREEN, roughness: 0.88 });
+    const creamMat = new THREE.MeshStandardMaterial({ color: CREAM, roughness: 0.88 });
     const squareGeo = new THREE.PlaneGeometry(1, 1);
     const labelGeo = new THREE.PlaneGeometry(0.42, 0.42);
 
@@ -167,8 +170,16 @@ const ChessEngine = (function () {
     boardGroup.add(frame);
 
     let pieces, captured;
+    let animationGeneration = 0;
+    const motionTokens = new WeakMap();
+    function cancelPieceMotion(mesh) { motionTokens.set(mesh, (motionTokens.get(mesh) || 0) + 1); }
+    function cancelAllMotions() {
+      animationGeneration++;
+      if (pieces) pieces.forEach(cancelPieceMotion);
+    }
 
     function homePosition() {
+      cancelAllMotions();
       pieces = [];
       captured = { w: 0, b: 0 };
       // a1 = tour, b1 = cavalier, c1 = fou, d1 = dame, e1 = roi... (standard)
@@ -213,6 +224,8 @@ const ChessEngine = (function () {
     }
 
     function removeToBench(mesh) {
+      cancelPieceMotion(mesh);
+      mesh.rotation.set(0, 0, 0);
       mesh.userData.alive = false;
       const key = mesh.userData.colorKey;
       const idx = captured[key]++;
@@ -222,6 +235,9 @@ const ChessEngine = (function () {
     }
 
     function placeInstant(mesh, square) {
+      cancelPieceMotion(mesh);
+      mesh.scale.setScalar(1);
+      mesh.rotation.set(0, 0, 0);
       const { col, row } = squareToColRow(square);
       mesh.position.set(col - BOARD_OFFSET, mesh.userData.homeY, row - BOARD_OFFSET);
       mesh.userData.square = square;
@@ -253,6 +269,9 @@ const ChessEngine = (function () {
     function animateTo(mesh, square, duration) {
       const { col, row } = squareToColRow(square);
       const start = performance.now();
+      const token = (motionTokens.get(mesh) || 0) + 1;
+      motionTokens.set(mesh, token);
+      const generation = animationGeneration;
       const from = { x: mesh.position.x, z: mesh.position.z };
       const to = { x: col - BOARD_OFFSET, z: row - BOARD_OFFSET };
       const homeY = mesh.userData.homeY;
@@ -260,6 +279,7 @@ const ChessEngine = (function () {
       const glow = mesh.userData.colorKey === 'w' ? 0xe9e5d6 : 0x8fd6b0;
 
       function step(now) {
+        if (motionTokens.get(mesh) !== token || generation !== animationGeneration) return;
         const raw = Math.min(1, (now - start) / duration);
         // Course horizontale : accélère puis ralentit en douceur.
         const eased = raw < 0.5
@@ -315,7 +335,7 @@ const ChessEngine = (function () {
       mover.userData.col = dest.col;
       mover.userData.row = dest.row;
 
-      if (animated && !reduceMotion) animateTo(mover, move.to, 900);
+      if (animated && !reduceMotion) animateTo(mover, move.to, 560);
       else placeInstant(mover, move.to);
 
       if (move.castle) {
@@ -325,7 +345,7 @@ const ChessEngine = (function () {
           rook.userData.square = move.castle.rookTo;
           rook.userData.col = rookDest.col;
           rook.userData.row = rookDest.row;
-          if (animated && !reduceMotion) animateTo(rook, move.castle.rookTo, 900);
+          if (animated && !reduceMotion) animateTo(rook, move.castle.rookTo, 560);
           else placeInstant(rook, move.castle.rookTo);
         }
       }
@@ -347,7 +367,7 @@ const ChessEngine = (function () {
 
       homePosition();
       for (let i = 0; i <= targetIndex; i++) {
-        applyMove(moves[i], i === targetIndex);
+        applyMove(moves[i], false);
       }
       currentIndex = targetIndex;
     }
@@ -363,13 +383,14 @@ const ChessEngine = (function () {
     // mobile) pour que le mouvement reste cohérent sur tous les formats.
     let flyToken = 0;
     function flyIn(duration) {
+      ++flyToken;
       if (reduceMotion) return;
       const target = camera.position.clone();
       const start = new THREE.Vector3(target.x, target.y * 1.85, target.z * 1.85 + 4.5);
       camera.position.copy(start);
       camera.lookAt(0, 0, 0.1);
       boardGroup.scale.setScalar(0.92);
-      const myToken = ++flyToken;
+      const myToken = flyToken;
       const t0 = performance.now();
       function step(now) {
         if (myToken !== flyToken) return; // une arrivée plus récente a pris le relais
@@ -384,6 +405,7 @@ const ChessEngine = (function () {
     }
 
     function resize() {
+      ++flyToken;
       const w = canvas.clientWidth || window.innerWidth || 1;
       const h = canvas.clientHeight || window.innerHeight || 1;
       if (w < 2 || h < 2) return; // taille pas encore stabilisée, on ignore
@@ -396,12 +418,13 @@ const ChessEngine = (function () {
       // des ratios extrêmes ou transitoires. On ajoute aussi une petite
       // marge de sécurité (SAFETY_MARGIN) pour ne jamais rogner un bord,
       // même en cas de léger écart de mesure du viewport.
-      const SAFETY_MARGIN = 1.08;
+      const SAFETY_MARGIN = 1.12;
       const distanceScale = (aspect < 1 ? Math.min(3, 1 / aspect) : 1) * SAFETY_MARGIN;
       camera.position.set(basePosition.x * distanceScale, basePosition.y * distanceScale, basePosition.z * distanceScale);
       camera.lookAt(0, 0, 0.1);
       camera.updateProjectionMatrix();
       renderer.setSize(w, h, false);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, w < 700 ? 1.35 : 1.75));
     }
     resize();
     window.addEventListener('resize', resize);
@@ -417,7 +440,7 @@ const ChessEngine = (function () {
 
     // Plateau totalement fixe : aucune dérive, aucun effet de souris.
     function tick() {
-      renderer.render(scene, camera);
+      if (!document.hidden && canvas.getClientRects().length && canvas.clientWidth > 1) renderer.render(scene, camera);
       requestAnimationFrame(tick);
     }
     tick();
