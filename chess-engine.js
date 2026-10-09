@@ -4,6 +4,12 @@ const ChessEngine = (function () {
 
   const FILES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
   const BOARD_OFFSET = 3.5;
+  function squareToColRow(square) {
+    const file = square[0];
+    const rank = Number.parseInt(square[1], 10);
+    return { col: FILES.indexOf(file), row: 8 - rank };
+  }
+
   // Pièces de style Staunton, modélisées géométriquement dans Three.js.
   // Aucun symbole plat ou police externe n'est nécessaire.
   const PIECE_MATERIALS = {
