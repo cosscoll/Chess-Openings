@@ -12,13 +12,15 @@ const ChessEngine = (function () {
 
   // Pièces de style Staunton, modélisées géométriquement dans Three.js.
   // Aucun symbole plat ou police externe n'est nécessaire.
+  // Ivoire satiné contre anthracite presque noir : deux camps bien distincts,
+  // mais sans surfaces "brûlées" par la lumière.
   const PIECE_MATERIALS = {
-    w: new THREE.MeshStandardMaterial({ color: 0xfff2d6, roughness: 0.32, metalness: 0.08 }),
-    b: new THREE.MeshStandardMaterial({ color: 0x202832, roughness: 0.3, metalness: 0.14 })
+    w: new THREE.MeshStandardMaterial({ color: 0xd2d7ce, roughness: 0.65, metalness: 0.02 }),
+    b: new THREE.MeshStandardMaterial({ color: 0x131b18, roughness: 0.52, metalness: 0.10 })
   };
   const PIECE_ACCENTS = {
-    w: new THREE.MeshStandardMaterial({ color: 0xc4a579, roughness: 0.38 }),
-    b: new THREE.MeshStandardMaterial({ color: 0x607486, roughness: 0.4 })
+    w: new THREE.MeshStandardMaterial({ color: 0x879a8e, roughness: 0.58, metalness: 0.02 }),
+    b: new THREE.MeshStandardMaterial({ color: 0x536e5d, roughness: 0.5, metalness: 0.13 })
   };
   function lathe(group, profile, material) {
     const points = profile.map(([radius,height]) => new THREE.Vector2(radius,height));
@@ -103,10 +105,10 @@ const ChessEngine = (function () {
     const canvas = document.createElement('canvas');
     canvas.width = size; canvas.height = size;
     const ctx = canvas.getContext('2d');
-    ctx.font = '700 30px "Segoe UI", Arial, sans-serif';
+    ctx.font = '700 25px "Segoe UI", Arial, sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'bottom';
-    ctx.fillStyle = onGreen ? 'rgba(245,249,242,0.92)' : 'rgba(46,76,62,0.72)';
+    ctx.fillStyle = onGreen ? 'rgba(221,237,224,0.9)' : 'rgba(130,177,149,0.9)';
     ctx.fillText(text, 4, size - 4);
     const texture = new THREE.CanvasTexture(canvas);
     texture.needsUpdate = true;
@@ -119,7 +121,8 @@ const ChessEngine = (function () {
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
     const scene = new THREE.Scene();
-    scene.fog = new THREE.Fog(0x05070b, 16, 34);
+    scene.background = new THREE.Color(0x030706);
+    scene.fog = new THREE.Fog(0x030706, 16, 34);
 
     const camera = new THREE.PerspectiveCamera(36, (canvas.clientWidth || 1) / (canvas.clientHeight || 1), 0.1, 100);
     // Caméra fixe, côté Blancs (rang 1 au premier plan / bas d'écran,
@@ -131,31 +134,37 @@ const ChessEngine = (function () {
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'high-performance' });
     renderer.outputEncoding = THREE.sRGBEncoding;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.45;
+    renderer.toneMappingExposure = 0.88;
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.85));
-    const keyLight = new THREE.DirectionalLight(0xffffff, 1.7);
+    // Contrastes maîtrisés : lumière diffuse douce et léger liseré sur les pièces noires.
+    scene.add(new THREE.AmbientLight(0xe4efe8, 0.56));
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.10);
     keyLight.position.set(3, 12, 5);
     scene.add(keyLight);
-    const fillLight = new THREE.DirectionalLight(0xbdd7ff, 0.6);
+    const fillLight = new THREE.DirectionalLight(0x88bd9e, 0.30);
     fillLight.position.set(-4, 7, -3);
     scene.add(fillLight);
+    const rimLight = new THREE.DirectionalLight(0xaad6ba, 0.5);
+    rimLight.position.set(0, 8, -8);
+    scene.add(rimLight);
 
     const boardGroup = new THREE.Group();
     scene.add(boardGroup);
 
-    const GREEN = 0x47735f;
-    const CREAM = 0xf2eee2;
-    const greenMat = new THREE.MeshStandardMaterial({ color: GREEN, roughness: 0.88 });
-    const creamMat = new THREE.MeshStandardMaterial({ color: CREAM, roughness: 0.88 });
+    // Matériaux non affectés par la lumière : vert forêt et noir restent fidèles
+    // aux couleurs choisies quel que soit le GPU ou la position de caméra.
+    const GREEN = 0x20543c;
+    const BLACK = 0x0b110f;
+    const greenMat = new THREE.MeshBasicMaterial({ color: GREEN, toneMapped: false });
+    const blackMat = new THREE.MeshBasicMaterial({ color: BLACK, toneMapped: false });
     const squareGeo = new THREE.PlaneGeometry(1, 1);
     const labelGeo = new THREE.PlaneGeometry(0.42, 0.42);
 
     for (let row = 0; row < 8; row++) {
       for (let col = 0; col < 8; col++) {
         const isGreen = (row + col) % 2 === 1;
-        const mesh = new THREE.Mesh(squareGeo, isGreen ? greenMat : creamMat);
+        const mesh = new THREE.Mesh(squareGeo, isGreen ? greenMat : blackMat);
         mesh.rotation.x = -Math.PI / 2;
         mesh.position.set(col - BOARD_OFFSET, 0, row - BOARD_OFFSET);
         boardGroup.add(mesh);
@@ -169,7 +178,7 @@ const ChessEngine = (function () {
 
     const frame = new THREE.LineSegments(
       new THREE.EdgesGeometry(new THREE.PlaneGeometry(8.02, 8.02)),
-      new THREE.LineBasicMaterial({ color: 0x2b2d33, transparent: true, opacity: 0.7 })
+      new THREE.LineBasicMaterial({ color: 0x638b73, transparent: true, opacity: 0.68 })
     );
     frame.rotation.x = -Math.PI / 2;
     frame.position.y = 0.002;
